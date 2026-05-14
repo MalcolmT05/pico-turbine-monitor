@@ -27,4 +27,4 @@ def start():
         print(f"Reading Sensor: {volts}V")
         
         # Adjust testing interval here seamlessly via GitHub edits!
-        time.sleep(10)
+        time.sleep(60)
