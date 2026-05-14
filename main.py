@@ -47,10 +47,8 @@ def check_for_updates():
             machine.reset()     
         else:
             print("✅ Code is up to date.")
-            send_status_update("Online & Up to Date")
     except Exception as e:
         print("OTA Update check failed:", e)
-        send_status_update("Online (OTA Check Failed)")
 
 # --- 3. HELPER FUNCTIONS ---
 def sync_time():
@@ -95,7 +93,6 @@ def connect_wifi():
         blink_led(3, 0.05)
         time.sleep(2) 
         sync_time()
-        send_status_update("Connected to Wi-Fi")  # Let Adafruit know we are live!
     else:
         print("WiFi Failed. Cooling down before retry...")
         led.off()      
@@ -103,16 +100,17 @@ def connect_wifi():
 
 # --- 4. REPORTING LOGIC ---
 def send_status_update(status_text):
-    """Sends a connection status heartbeat heartbeat to Adafruit IO"""
-    local_now = time.localtime()
-    timestamped_msg = f"[{local_now[3]:02d}:{local_now[4]:02d}] {status_text}"
-    client = MQTTClient("pico_status_heartbeat", "io.adafruit.com", user=AIO_USER, password=AIO_KEY, ssl=False)
+    """Sends a connection status heartbeat to Adafruit IO without blocking"""
     try:
+        local_now = time.localtime()
+        timestamped_msg = f"[{local_now[3]:02d}:{local_now[4]:02d}] {status_text}"
+        client = MQTTClient("pico_status_hb", "io.adafruit.com", user=AIO_USER, password=AIO_KEY, ssl=False)
         client.connect()
         client.publish(f"{AIO_USER}/feeds/pico-status", timestamped_msg)
         client.disconnect()
         print(f"Status sent to Adafruit: {timestamped_msg}")
     except Exception as e:
+        # Crucial: If network fails, just print it. Do NOT crash or stop the Pico!
         print("Failed to send status update:", e)
 
 def send_feed_report(message):
@@ -162,7 +160,7 @@ def send_data():
         client.disconnect()
         print(f"[{local_now[3]:02d}:{local_now[4]:02d}] Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
         
-        # Periodic Heartbeat every 15 data entries (~15 minutes) so you know it's still alive
+        # Periodic Heartbeat every 15 minutes
         if sample_count % 15 == 0:
             send_status_update("Running Normally")
             
@@ -183,6 +181,8 @@ connect_wifi()
 
 if network.WLAN(network.STA_IF).isconnected():
     check_for_updates()  
+    # Send the live status safely AFTER everything else is initialized
+    send_status_update("System Fully Booted & Ready")
 
 while True:
     if network.WLAN(network.STA_IF).isconnected():
