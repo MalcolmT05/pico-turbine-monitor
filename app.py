@@ -2,8 +2,7 @@ import time
 import random
 import machine
 import os
-import ntptime
-import utime
+import urequests
 from umqtt.simple import MQTTClient
 from secrets import secrets
 
@@ -33,22 +32,30 @@ def send_status_msg(client, message):
         print(f"Failed sending status log: {e}")
 
 def sync_pico_clock():
-    """Syncs the Pico's internal clock and adjusts for local timezone (+8 Hours)"""
-    print("⏰ Syncing internal clock with internet time (NTP)...")
+    """Fetches the exact local time directly from Adafruit's time API"""
+    print("⏰ Fetching local time from Adafruit API...")
+    url = f"https://io.adafruit.com/api/v2/{AIO_USER}/integrations/time/clock?x-aio-key={AIO_KEY}"
     try:
-        # Pull down the raw UTC time from the atomic server
-        ntptime.settime()
-        
-        # Adjust for local timezone (+8 UTC)
-        # 8 hours * 60 minutes * 60 seconds = 28800 seconds
-        timezone_offset = 8 * 3600 
-        local_time_sec = utime.time() + timezone_offset
-        
-        # Apply the offset explicitly to the Pico's hardware Real Time Clock (RTC)
-        machine.RTC().datetime(utime.localtime(local_time_sec))
-        print("✅ Clock synchronized to local time (+8 UTC) successfully!")
+        res = urequests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            # Adafruit gives us a perfectly formatted dictionary of the current local time
+            # Format: [year, month, day, hour, minute, second, weekday, yearday]
+            year = data['year']
+            month = data['mon']
+            day = data['mday']
+            hour = data['hour']
+            minute = data['min']
+            second = data['sec']
+            
+            # Update the Pico's internal hardware Real Time Clock
+            machine.RTC().datetime((year, month, day, 0, hour, minute, second, 0))
+            print(f"✅ Clock successfully synced to Adafruit Time: {hour:02d}:{minute:02d}")
+        else:
+            print(f"❌ Adafruit Time API returned status: {res.status_code}")
+        res.close()
     except Exception as e:
-        print("⚠️ NTP Time Sync failed (will use default onboard timer):", e)
+        print("⚠️ Clock sync failed. Falling back to onboard timer:", e)
 
 def process_offline_vault(client):
     """Checks if backup data exists from an outage and uploads recovery status"""
@@ -84,7 +91,7 @@ def start():
     
     print("--- 🔋 Turbine Monitoring System Online ---")
     
-    # Force real-time clock sync immediately on start
+    # Force real-time clock sync immediately on start using Adafruit
     sync_pico_clock()
     
     # Establish baseline tracking markers *after* time sync has aligned the hours
