@@ -151,6 +151,10 @@ def send_data():
         sample_count = 0
 
 # --- 5. MAIN EXECUTION FLOW ---
+# 🔌 Safety delay so Thonny can connect without crashing the backend!
+print("Booting up in 2 seconds...")
+time.sleep(2) 
+
 connect_wifi()
 
 if network.WLAN(network.STA_IF).isconnected():
