@@ -11,6 +11,7 @@ from secrets import secrets  # 🔐 Import your hidden credentials
 # --- 1. CONFIGURATION (SAFE FOR PUBLIC GITHUB) ---
 rp2.country('MY') 
 
+# Extracting credentials securely from local secrets.py file
 WIFI_SSID = secrets['wifi_ssid']
 WIFI_PASS = secrets['wifi_pass']
 AIO_USER = secrets['aio_user']
@@ -35,7 +36,7 @@ temp_sensor = machine.ADC(machine.ADC.CORE_TEMP)
 def check_for_updates():
     print("Checking for remote code updates...")
     try:
-        # Strict 10-second timeout on the update check so it can never hang forever
+        # Pointing directly to GitHub's raw delivery URL eliminates invisible character mismatches
         OTA = senko.Senko(
             user=GITHUB_USER,
             repo=GITHUB_REPO,
@@ -56,11 +57,10 @@ def sync_time():
     global current_calendar_day
     print("Syncing network time...")
     try:
-        # 🛠️ MicroPython native way to set the NTP network timeout to 5 seconds
-        import usocket
+        # Configure the network host name
         ntptime.host = "pool.ntp.org"
         
-        # We manually query and catch errors safely
+        # Safely query time server. If it fails, the except block catches it instantly
         ntptime.settime()
         
         local_time_sec = time.time() + 28800
@@ -71,6 +71,7 @@ def sync_time():
     except Exception as e:
         print("⚠️ Time sync bypassed (Will use system tick counter):", e)
         current_calendar_day = time.localtime()[2]
+
 def get_internal_temp():
     reading = temp_sensor.read_u16() * (3.3 / 65535)
     return round(27 - (reading - 0.706) / 0.001721, 2)
@@ -98,7 +99,7 @@ def connect_wifi():
         led.off() 
         blink_led(3, 0.05)
         time.sleep(2) 
-        sync_time()  # Safely runs with a 5-second max escape window
+        sync_time()  
     else:
         print("WiFi Failed. Cooling down before retry...")
         led.off()      
