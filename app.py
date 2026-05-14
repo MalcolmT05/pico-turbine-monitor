@@ -27,17 +27,17 @@ def get_internal_temp():
     reading = temp_sensor.read_u16() * (3.3 / 65535)
     return round(27 - (reading - 0.706) / 0.001721, 2)
 
-def send_feed_report(client, feed_name, message):
+def send_status_msg(client, message):
+    """Utility function to stream text logs to the pico-status feed"""
     try:
-        client.publish(f"{AIO_USER}/feeds/{feed_name}", message)
-        print(f"📋 Feed Report Posted [{feed_name}]: {message}")
+        client.publish(f"{AIO_USER}/feeds/pico-status", message)
+        print(f"📋 Status Log Streamed: {message}")
     except Exception as e:
-        print(f"Failed sending text report to {feed_name}: {e}")
+        print(f"Failed sending status log: {e}")
 
 def process_offline_vault(client):
-    """Checks if backup data exists from a Wi-Fi outage and uploads a summary"""
+    """Checks if backup data exists from an outage and uploads recovery status"""
     try:
-        # Check if the backup file exists in storage
         files = os.listdir()
         if BACKUP_FILE in files:
             print("📦 Offline backup data found! Processing vault...")
@@ -55,33 +55,31 @@ def process_offline_vault(client):
                         if outage_lines == 1:
                             first_timestamp = parts[0]
                         last_timestamp = parts[0]
-                        # Accumulate the saved daily progress
                         stored_wh = float(parts[3])
             
-            # Send a recovery summary report to your text feed
-            recovery_msg = f"📡 Wi-Fi Recovered! Logged {outage_lines} mins of outage data from {first_timestamp} to {last_timestamp}. Peak Accum: {round(stored_wh, 2)} Wh."
-            send_feed_report(client, "welcome-feed", recovery_msg)
+            # Stream a recovery text alert to your Stream box
+            recovery_msg = f"🟢 Wi-Fi Recovered! Logged {outage_lines} mins of outage from {first_timestamp} to {last_timestamp}. Peak Accum: {round(stored_wh, 2)} Wh."
+            send_status_msg(client, recovery_msg)
             
             # Clean up storage by deleting the backup file
             os.remove(BACKUP_FILE)
-            print("✅ Storage vault cleared and synced with Adafruit.")
+            print("✅ Storage vault cleared and synced.")
     except Exception as e:
         print("⚠️ Failed to process offline vault data:", e)
 
 def start():
     global hourly_energy_wh, daily_energy_wh, current_calendar_day, last_logged_hour
     
-    print("--- 🔋 Real-Time Turbine Monitor & Vault Storage Active ---")
+    print("--- 🔋 Turbine Monitoring System Online ---")
     client = MQTTClient("pico_turbine_runtime", "io.adafruit.com", user=AIO_USER, password=AIO_KEY, ssl=False)
     
     while True:
-        # Get exact current real time from the Pico's clock
         local_now = time.localtime()
         this_day    = local_now[2]
         this_hour   = local_now[3]
         this_minute = local_now[4]
         
-        # 1. MATHEMATICAL CALCULATIONS (Simulated readings, ready for physical sensors)
+        # 1. MATHEMATICAL CALCULATIONS (Simulated turbine input)
         volts = round(random.uniform(11.0, 14.5), 2)
         amps  = round(random.uniform(0.0, 5.5), 2)
         watts = round(volts * amps, 2)
@@ -92,16 +90,16 @@ def start():
         hourly_energy_wh += calculated_step_wh
         daily_energy_wh += calculated_step_wh
         
-        print(f"📡 [{this_hour:02d}:{this_minute:02d}] Live: {volts}V | {amps}A | Total Accum: {round(daily_energy_wh, 2)}Wh")
+        print(f"📡 [{this_hour:02d}:{this_minute:02d}] Live: {volts}V | {amps}A | Running Daily Total: {round(daily_energy_wh, 2)}Wh")
         
         # 2. ATTEMPT DATA TRANSMISSION
         try:
             client.connect()
             
-            # If we connected successfully, check if we need to dump an old backup file first
+            # Check and dump old backup logs if coming back online
             process_offline_vault(client)
             
-            # Streaming live numeric variables
+            # Stream live metrics to gauges and graphs
             client.publish(f"{AIO_USER}/feeds/turbine-voltage", str(volts))
             time.sleep_ms(150)
             client.publish(f"{AIO_USER}/feeds/turbine-current", str(amps))
@@ -111,16 +109,20 @@ def start():
             client.publish(f"{AIO_USER}/feeds/pico-temp", str(pico_temp))
             time.sleep_ms(150)
             
-            # 3. REAL-TIME CLOCK HOURLY TRIGGER (Updates exactly at 10:00, 11:00, 12:00, etc.)
+            # Send a live "Heartbeat" to the stream block so you know the Pico is actively communicating
+            send_status_msg(client, f"⚡ Pico Active at {this_hour:02d}:{this_minute:02d} | Live: {watts}W")
+            time.sleep_ms(150)
+            
+            # 3. REAL-TIME CLOCK HOURLY TRIGGER (Pushes number to a GRAPH at 10:00, 11:00, 12:00 etc.)
             if this_hour != last_logged_hour:
-                # Format a user-friendly timestamp label (e.g., "12 p.m.")
-                am_pm = "a.m." if this_hour < 12 else "p.m."
-                display_hour = this_hour if (0 < this_hour <= 12) else (this_hour % 12)
-                if display_hour == 0: display_hour = 12
+                final_hour_wh = round(hourly_energy_wh, 2)
                 
-                hour_label = f"{display_hour} {am_pm}"
-                hour_summary = f"🕐 Total Power at {hour_label} = {round(hourly_energy_wh, 2)} Wh"
-                send_feed_report(client, "welcome-feed", hour_summary)
+                # Push raw number data to your hourly graph feed
+                client.publish(f"{AIO_USER}/feeds/turbine-hourly-power", str(final_hour_wh))
+                time.sleep_ms(150)
+                
+                # Push a matching text log notification to your stream block
+                send_status_msg(client, f"🕐 Hourly Report: Accumulated {final_hour_wh} Wh over the past hour.")
                 
                 # Reset hourly tracker and lock in current hour
                 hourly_energy_wh = 0.0
@@ -128,25 +130,20 @@ def start():
             
             # 4. MIDNIGHT RESET TRIGGER
             if this_day != current_calendar_day:
-                day_summary = f"📆 DAILY GRAND TOTAL = {round(daily_energy_wh, 2)} Wh"
-                send_feed_report(client, "welcome-feed", day_summary)
-                
+                send_status_msg(client, f"📆 Daily Total Reset. Grand Total for yesterday: {round(daily_energy_wh, 2)} Wh.")
                 daily_energy_wh = 0.0
                 current_calendar_day = this_day
                 
             client.disconnect()
-            print("✅ Telemetry successfully pushed to Adafruit.")
+            print("✅ Telemetry successfully pushed.")
             
         except Exception as e:
-            # FALLBACK LOGIC IF WIFI IS DOWN OR DISCONNECTED
-            print(f"⚠️ Wi-Fi Error: {e}. Saving telemetry to internal vault storage...")
+            print(f"⚠️ Wi-Fi Error: {e}. Saving telemetry to vault storage...")
             try:
                 with open(BACKUP_FILE, "a") as vault:
-                    # Write timestamp, volts, amps, and running daily energy to local memory
                     vault.write(f"{this_hour:02d}:{this_minute:02d},{volts},{amps},{round(daily_energy_wh, 2)}\n")
                 print(f"💾 Saved record locally at {this_hour:02d}:{this_minute:02d}")
             except Exception as file_err:
-                print("🛑 Critical hardware storage failure:", file_err)
+                print("🛑 Critical storage failure:", file_err)
             
-        # Delay exactly 1 minute before checking everything again
         time.sleep(INTERVAL)
