@@ -11,7 +11,6 @@ from secrets import secrets  # 🔐 Import your hidden credentials
 # --- 1. CONFIGURATION (SAFE FOR PUBLIC GITHUB) ---
 rp2.country('MY') 
 
-# Extracting credentials securely from local secrets.py file
 WIFI_SSID = secrets['wifi_ssid']
 WIFI_PASS = secrets['wifi_pass']
 AIO_USER = secrets['aio_user']
@@ -26,7 +25,7 @@ hourly_energy_wh = 0.0
 daily_energy_wh = 0.0
 sample_count = 0
 INTERVAL = 60  
-current_calendar_day = None 
+current_calendar_day = time.localtime()[2] # Initialize with internal day counter immediately
 
 # Hardware Setup
 led = machine.Pin("LED", machine.Pin.OUT)
@@ -36,7 +35,6 @@ temp_sensor = machine.ADC(machine.ADC.CORE_TEMP)
 def check_for_updates():
     print("Checking for remote code updates...")
     try:
-        # Pointing directly to GitHub's raw delivery URL eliminates invisible character mismatches
         OTA = senko.Senko(
             user=GITHUB_USER,
             repo=GITHUB_REPO,
@@ -50,27 +48,22 @@ def check_for_updates():
         else:
             print("✅ Code is up to date.")
     except Exception as e:
-        print("⚠️ OTA Update check bypassed (Network Timeout/Error):", e)
+        print("⚠️ OTA Update check bypassed:", e)
 
 # --- 3. HELPER FUNCTIONS ---
 def sync_time():
     global current_calendar_day
-    print("Syncing network time...")
+    print("Attempting background network time sync...")
     try:
-        # Configure the network host name
         ntptime.host = "pool.ntp.org"
-        
-        # Safely query time server. If it fails, the except block catches it instantly
         ntptime.settime()
-        
         local_time_sec = time.time() + 28800
         (year, month, mday, hour, minute, second, weekday, yearday) = time.localtime(local_time_sec)
         machine.RTC().datetime((year, month, mday, weekday, hour, minute, second, 0))
         current_calendar_day = mday
         print(f"⏰ Time Synced! Local Time: {hour:02d}:{minute:02d}")
     except Exception as e:
-        print("⚠️ Time sync bypassed (Will use system tick counter):", e)
-        current_calendar_day = time.localtime()[2]
+        print("⚠️ Time sync failed (Will use internal counter):", e)
 
 def get_internal_temp():
     reading = temp_sensor.read_u16() * (3.3 / 65535)
@@ -98,8 +91,6 @@ def connect_wifi():
         print("WiFi Connected!")
         led.off() 
         blink_led(3, 0.05)
-        time.sleep(2) 
-        sync_time()  
     else:
         print("WiFi Failed. Cooling down before retry...")
         led.off()      
@@ -107,7 +98,7 @@ def connect_wifi():
 
 # --- 4. REPORTING LOGIC ---
 def send_status_update(status_text):
-    """Sends a connection status heartbeat to Adafruit IO without blocking"""
+    """Sends a connection status heartbeat to Adafruit IO"""
     try:
         local_now = time.localtime()
         timestamped_msg = f"[{local_now[3]:02d}:{local_now[4]:02d}] {status_text}"
@@ -134,13 +125,12 @@ def send_data():
     this_day = local_now[2]
     this_hour = local_now[3]
     
+    # Check for midnight transition safely using internal counters
     if current_calendar_day is not None and this_day != current_calendar_day:
         day_summary = f"📆 DAILY TOTAL GENERATION = {round(daily_energy_wh, 2)} Wh."
         send_feed_report(day_summary)
         daily_energy_wh = 0.0
         current_calendar_day = this_day
-        
-        send_status_update("Midnight Reset & Checking Updates")
         check_for_updates()
 
     volts = round(random.uniform(11.0, 14.5), 2)
@@ -157,15 +147,19 @@ def send_data():
     try:
         client.connect()
         client.publish(f"{AIO_USER}/feeds/turbine-voltage", str(volts))
-        time.sleep_ms(200)
+        time.sleep_ms(150)
         client.publish(f"{AIO_USER}/feeds/turbine-current", str(amps))
-        time.sleep_ms(200)
+        time.sleep_ms(150)
         client.publish(f"{AIO_USER}/feeds/turbine-power", str(watts))
-        time.sleep_ms(200)
+        time.sleep_ms(150)
         client.publish(f"{AIO_USER}/feeds/pico-temp", str(pico_temp))
         client.disconnect()
         print(f"[{local_now[3]:02d}:{local_now[4]:02d}] Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
         
+        # Try to sync time in the background only once every hour instead of freezing boot
+        if sample_count == 5:
+            sync_time()
+            
         if sample_count % 15 == 0:
             send_status_update("Running Normally")
             
@@ -185,8 +179,8 @@ time.sleep(2)
 connect_wifi()
 
 if network.WLAN(network.STA_IF).isconnected():
-    check_for_updates()  
     send_status_update("System Fully Booted & Ready")
+    check_for_updates()  
 
 while True:
     if network.WLAN(network.STA_IF).isconnected():
