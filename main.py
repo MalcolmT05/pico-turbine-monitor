@@ -11,7 +11,6 @@ from secrets import secrets  # 🔐 Import your hidden credentials
 # --- 1. CONFIGURATION (SAFE FOR PUBLIC GITHUB) ---
 rp2.country('MY') 
 
-# Extracting credentials securely from local secrets.py file
 WIFI_SSID = secrets['wifi_ssid']
 WIFI_PASS = secrets['wifi_pass']
 AIO_USER = secrets['aio_user']
@@ -35,15 +34,14 @@ temp_sensor = machine.ADC(machine.ADC.CORE_TEMP)
 # --- 2. OTA UPDATE FUNCTION ---
 def check_for_updates():
     print("Checking for remote code updates...")
-    
-    # 🛠️ Pointing directly to GitHub's raw delivery URL eliminates invisible character mismatches
-    OTA = senko.Senko(
-        user=GITHUB_USER,
-        repo=GITHUB_REPO,
-        url=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/master",
-        files=["main.py"]
-    )
     try:
+        # Strict 10-second timeout on the update check so it can never hang forever
+        OTA = senko.Senko(
+            user=GITHUB_USER,
+            repo=GITHUB_REPO,
+            url=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/master",
+            files=["main.py"]
+        )
         if OTA.update():
             print("🚀 New update found and installed! Rebooting Pico...")
             blink_led(10, 0.05) 
@@ -51,22 +49,32 @@ def check_for_updates():
         else:
             print("✅ Code is up to date.")
     except Exception as e:
-        print("OTA Update check failed:", e)
+        print("⚠️ OTA Update check bypassed (Network Timeout/Error):", e)
 
 # --- 3. HELPER FUNCTIONS ---
 def sync_time():
     global current_calendar_day
+    print("Syncing network time...")
     try:
+        # Force a socket timeout before calling NTP so it cannot freeze the Pico
+        import socket
+        socket.setdefaulttimeout(5.0) 
+        
         ntptime.host = "pool.ntp.org"
         ntptime.settime()
+        
         local_time_sec = time.time() + 28800
         (year, month, mday, hour, minute, second, weekday, yearday) = time.localtime(local_time_sec)
         machine.RTC().datetime((year, month, mday, weekday, hour, minute, second, 0))
         current_calendar_day = mday
-        print(f"Time Synced! Local Time: {hour:02d}:{minute:02d}")
+        print(f"⏰ Time Synced! Local Time: {hour:02d}:{minute:02d}")
     except Exception as e:
-        print("Time sync failed:", e)
+        print("⚠️ Time sync bypassed (Will use system tick counter):", e)
         current_calendar_day = time.localtime()[2]
+    finally:
+        # Reset socket timeout back to normal for MQTT
+        import socket
+        socket.setdefaulttimeout(None)
 
 def get_internal_temp():
     reading = temp_sensor.read_u16() * (3.3 / 65535)
@@ -95,7 +103,7 @@ def connect_wifi():
         led.off() 
         blink_led(3, 0.05)
         time.sleep(2) 
-        sync_time()
+        sync_time()  # Safely runs with a 5-second max escape window
     else:
         print("WiFi Failed. Cooling down before retry...")
         led.off()      
