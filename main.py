@@ -18,7 +18,6 @@ AIO_USER = secrets['aio_user']
 AIO_KEY  = secrets['aio_key']
 
 # 🚀 OTA Remote Update Settings
-# CHANGE THESE TWO LINES TO MATCH YOUR GITHUB PROFILE EXACTLY:
 GITHUB_USER = "MalcolmT05"  
 GITHUB_REPO = "pico-turbine-monitor"      
 
@@ -90,6 +89,9 @@ def connect_wifi():
     if wlan.isconnected():
         print("WiFi Connected!")
         blink_led(3, 0.05)
+        
+        # ⏳ Network stabilization breathing room to fix NTP ETIMEDOUT
+        time.sleep(2) 
         sync_time()
     else:
         print("WiFi Failed.")
@@ -140,7 +142,7 @@ def send_data():
         time.sleep_ms(200)
         client.publish(f"{AIO_USER}/feeds/pico-temp", str(pico_temp))
         client.disconnect()
-        print(f"[{local_now[3]:02d}:{local_now[4]:02d}] 🚀 SUCCESS! Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
+        print(f"[{local_now[3]:02d}:{local_now[4]:02d}] Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
     except Exception as e:
         print("Update failed:", e)
 
@@ -151,7 +153,7 @@ def send_data():
         sample_count = 0
 
 # --- 5. MAIN EXECUTION FLOW ---
-# 🔌 Safety delay so Thonny can connect without crashing the backend!
+# 🔌 Safety connection buffer for Thonny
 print("Booting up in 2 seconds...")
 time.sleep(2) 
 
@@ -167,3 +169,4 @@ while True:
         connect_wifi()
         
     time.sleep(INTERVAL)
+
