@@ -32,30 +32,30 @@ def send_status_msg(client, message):
         print(f"Failed sending status log: {e}")
 
 def sync_pico_clock():
-    """Fetches the exact local time directly from Adafruit's time API"""
-    print("⏰ Fetching local time from Adafruit API...")
-    url = f"https://io.adafruit.com/api/v2/{AIO_USER}/integrations/time/clock?x-aio-key={AIO_KEY}"
+    """Fetches text time directly from Adafruit's local time string API"""
+    print("⏰ Fetching local text time from Adafruit API...")
+    # This specific endpoint outputs text in your account's designated timezone format: YYYY-MM-DD HH:MM:SS
+    url = f"https://io.adafruit.com/api/v2/{AIO_USER}/integrations/time/task"
     try:
         res = urequests.get(url)
         if res.status_code == 200:
-            data = res.json()
-            # Adafruit gives us a perfectly formatted dictionary of the current local time
-            # Format: [year, month, day, hour, minute, second, weekday, yearday]
-            year = data['year']
-            month = data['mon']
-            day = data['mday']
-            hour = data['hour']
-            minute = data['min']
-            second = data['sec']
+            time_str = res.text.strip() # Example: "2026-05-14 13:12:05"
+            print(f"📥 Received Raw Time String: {time_str}")
             
-            # Update the Pico's internal hardware Real Time Clock
+            # Split the date and time segments out safely
+            date_part, time_part = time_str.split(" ")
+            year, month, day = map(int, date_part.split("-"))
+            hour, minute, second = map(int, time_part.split(":"))
+            
+            # Apply to hardware RTC using standard MicroPython 8-item tuple
+            # Format: (year, month, day, weekday, hour, minute, second, subseconds)
             machine.RTC().datetime((year, month, day, 0, hour, minute, second, 0))
-            print(f"✅ Clock successfully synced to Adafruit Time: {hour:02d}:{minute:02d}")
+            print("✅ Clock hardware synchronized successfully!")
         else:
             print(f"❌ Adafruit Time API returned status: {res.status_code}")
         res.close()
     except Exception as e:
-        print("⚠️ Clock sync failed. Falling back to onboard timer:", e)
+        print("⚠️ Clock sync parsing failed. Falling back to onboard timer:", e)
 
 def process_offline_vault(client):
     """Checks if backup data exists from an outage and uploads recovery status"""
