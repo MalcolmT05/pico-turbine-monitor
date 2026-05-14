@@ -47,8 +47,10 @@ def check_for_updates():
             machine.reset()     
         else:
             print("✅ Code is up to date.")
+            send_status_update("Online & Up to Date")
     except Exception as e:
         print("OTA Update check failed:", e)
+        send_status_update("Online (OTA Check Failed)")
 
 # --- 3. HELPER FUNCTIONS ---
 def sync_time():
@@ -86,17 +88,33 @@ def connect_wifi():
             if wlan.isconnected(): break
             led.toggle()
             time.sleep(1)
+            
     if wlan.isconnected():
         print("WiFi Connected!")
+        led.off() 
         blink_led(3, 0.05)
-        
-        # ⏳ Network stabilization breathing room to fix NTP ETIMEDOUT
         time.sleep(2) 
         sync_time()
+        send_status_update("Connected to Wi-Fi")  # Let Adafruit know we are live!
     else:
-        print("WiFi Failed.")
+        print("WiFi Failed. Cooling down before retry...")
+        led.off()      
+        time.sleep(10) 
 
 # --- 4. REPORTING LOGIC ---
+def send_status_update(status_text):
+    """Sends a connection status heartbeat heartbeat to Adafruit IO"""
+    local_now = time.localtime()
+    timestamped_msg = f"[{local_now[3]:02d}:{local_now[4]:02d}] {status_text}"
+    client = MQTTClient("pico_status_heartbeat", "io.adafruit.com", user=AIO_USER, password=AIO_KEY, ssl=False)
+    try:
+        client.connect()
+        client.publish(f"{AIO_USER}/feeds/pico-status", timestamped_msg)
+        client.disconnect()
+        print(f"Status sent to Adafruit: {timestamped_msg}")
+    except Exception as e:
+        print("Failed to send status update:", e)
+
 def send_feed_report(message):
     client = MQTTClient("pico_report", "io.adafruit.com", user=AIO_USER, password=AIO_KEY, ssl=False)
     try:
@@ -118,7 +136,7 @@ def send_data():
         daily_energy_wh = 0.0
         current_calendar_day = this_day
         
-        # Check for remote updates automatically at midnight transition
+        send_status_update("Midnight Reset & Checking Updates")
         check_for_updates()
 
     volts = round(random.uniform(11.0, 14.5), 2)
@@ -143,6 +161,11 @@ def send_data():
         client.publish(f"{AIO_USER}/feeds/pico-temp", str(pico_temp))
         client.disconnect()
         print(f"[{local_now[3]:02d}:{local_now[4]:02d}] Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
+        
+        # Periodic Heartbeat every 15 data entries (~15 minutes) so you know it's still alive
+        if sample_count % 15 == 0:
+            send_status_update("Running Normally")
+            
     except Exception as e:
         print("Update failed:", e)
 
@@ -153,14 +176,13 @@ def send_data():
         sample_count = 0
 
 # --- 5. MAIN EXECUTION FLOW ---
-# 🔌 Safety connection buffer for Thonny
 print("Booting up in 2 seconds...")
 time.sleep(2) 
 
 connect_wifi()
 
 if network.WLAN(network.STA_IF).isconnected():
-    check_for_updates()  # Run the check immediately on power-up!
+    check_for_updates()  
 
 while True:
     if network.WLAN(network.STA_IF).isconnected():
@@ -169,4 +191,3 @@ while True:
         connect_wifi()
         
     time.sleep(INTERVAL)
-
