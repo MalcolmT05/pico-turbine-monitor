@@ -2,6 +2,7 @@ import time
 import random
 import machine
 import os
+import ntptime
 from umqtt.simple import MQTTClient
 from secrets import secrets
 
@@ -14,11 +15,6 @@ INTERVAL = 60  # 🕐 Check and update every 60 seconds
 BACKUP_FILE = "backup_log.txt"
 hourly_energy_wh = 0.0
 daily_energy_wh = 0.0
-
-# Track the calendar date AND the current hour to look for changes
-local_now = time.localtime()
-current_calendar_day = local_now[2] 
-last_logged_hour = local_now[3]
 
 # Configure hardware tracking
 temp_sensor = machine.ADC(machine.ADC.CORE_TEMP)
@@ -34,6 +30,15 @@ def send_status_msg(client, message):
         print(f"📋 Status Log Streamed: {message}")
     except Exception as e:
         print(f"Failed sending status log: {e}")
+
+def sync_pico_clock():
+    """Syncs the Pico's internal clock with internet atomic time"""
+    print("⏰ Syncing internal clock with internet time (NTP)...")
+    try:
+        ntptime.settime()
+        print("✅ Clock synchronized successfully!")
+    except Exception as e:
+        print("⚠️ NTP Time Sync failed (will use default onboard timer):", e)
 
 def process_offline_vault(client):
     """Checks if backup data exists from an outage and uploads recovery status"""
@@ -57,20 +62,26 @@ def process_offline_vault(client):
                         last_timestamp = parts[0]
                         stored_wh = float(parts[3])
             
-            # Stream a recovery text alert to your Stream box
             recovery_msg = f"🟢 Wi-Fi Recovered! Logged {outage_lines} mins of outage from {first_timestamp} to {last_timestamp}. Peak Accum: {round(stored_wh, 2)} Wh."
             send_status_msg(client, recovery_msg)
-            
-            # Clean up storage by deleting the backup file
             os.remove(BACKUP_FILE)
             print("✅ Storage vault cleared and synced.")
     except Exception as e:
         print("⚠️ Failed to process offline vault data:", e)
 
 def start():
-    global hourly_energy_wh, daily_energy_wh, current_calendar_day, last_logged_hour
+    global hourly_energy_wh, daily_energy_wh
     
     print("--- 🔋 Turbine Monitoring System Online ---")
+    
+    # Force real-time clock sync immediately on start
+    sync_pico_clock()
+    
+    # Establish baseline tracking markers *after* time sync
+    local_now = time.localtime()
+    current_calendar_day = local_now[2] 
+    last_logged_hour = local_now[3]
+    
     client = MQTTClient("pico_turbine_runtime", "io.adafruit.com", user=AIO_USER, password=AIO_KEY, ssl=False)
     
     while True:
@@ -95,8 +106,6 @@ def start():
         # 2. ATTEMPT DATA TRANSMISSION
         try:
             client.connect()
-            
-            # Check and dump old backup logs if coming back online
             process_offline_vault(client)
             
             # Stream live metrics to gauges and graphs
@@ -109,11 +118,11 @@ def start():
             client.publish(f"{AIO_USER}/feeds/pico-temp", str(pico_temp))
             time.sleep_ms(150)
             
-            # Send a live "Heartbeat" to the stream block so you know the Pico is actively communicating
+            # Heartbeat to the stream block
             send_status_msg(client, f"⚡ Pico Active at {this_hour:02d}:{this_minute:02d} | Live: {watts}W")
             time.sleep_ms(150)
             
-            # 3. REAL-TIME CLOCK HOURLY TRIGGER (Pushes number to a GRAPH at 10:00, 11:00, 12:00 etc.)
+            # 3. REAL-TIME CLOCK HOURLY TRIGGER
             if this_hour != last_logged_hour:
                 final_hour_wh = round(hourly_energy_wh, 2)
                 
