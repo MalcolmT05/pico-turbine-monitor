@@ -35,9 +35,12 @@ temp_sensor = machine.ADC(machine.ADC.CORE_TEMP)
 # --- 2. OTA UPDATE FUNCTION ---
 def check_for_updates():
     print("Checking for remote code updates...")
+    
+    # 🛠️ Pointing directly to GitHub's raw delivery URL eliminates invisible character mismatches
     OTA = senko.Senko(
         user=GITHUB_USER,
         repo=GITHUB_REPO,
+        url=f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/master",
         files=["main.py"]
     )
     try:
@@ -110,7 +113,6 @@ def send_status_update(status_text):
         client.disconnect()
         print(f"Status sent to Adafruit: {timestamped_msg}")
     except Exception as e:
-        # Crucial: If network fails, just print it. Do NOT crash or stop the Pico!
         print("Failed to send status update:", e)
 
 def send_feed_report(message):
@@ -160,7 +162,6 @@ def send_data():
         client.disconnect()
         print(f"[{local_now[3]:02d}:{local_now[4]:02d}] Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
         
-        # Periodic Heartbeat every 15 minutes
         if sample_count % 15 == 0:
             send_status_update("Running Normally")
             
@@ -181,7 +182,6 @@ connect_wifi()
 
 if network.WLAN(network.STA_IF).isconnected():
     check_for_updates()  
-    # Send the live status safely AFTER everything else is initialized
     send_status_update("System Fully Booted & Ready")
 
 while True:
