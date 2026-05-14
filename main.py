@@ -140,7 +140,7 @@ def send_data():
         time.sleep_ms(200)
         client.publish(f"{AIO_USER}/feeds/pico-temp", str(pico_temp))
         client.disconnect()
-        print(f"[{local_now[3]:02d}:{local_now[4]:02d}] Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
+        print(f"[{local_now[3]:02d}:{local_now[4]:02d}] 🚀 SUCCESS! Live update sent. Day Accum: {round(daily_energy_wh,2)}Wh")
     except Exception as e:
         print("Update failed:", e)
 
