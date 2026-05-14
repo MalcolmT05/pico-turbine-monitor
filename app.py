@@ -3,6 +3,7 @@ import random
 import machine
 import os
 import ntptime
+import utime
 from umqtt.simple import MQTTClient
 from secrets import secrets
 
@@ -32,11 +33,20 @@ def send_status_msg(client, message):
         print(f"Failed sending status log: {e}")
 
 def sync_pico_clock():
-    """Syncs the Pico's internal clock with internet atomic time"""
+    """Syncs the Pico's internal clock and adjusts for local timezone (+8 Hours)"""
     print("⏰ Syncing internal clock with internet time (NTP)...")
     try:
+        # Pull down the raw UTC time from the atomic server
         ntptime.settime()
-        print("✅ Clock synchronized successfully!")
+        
+        # Adjust for local timezone (+8 UTC)
+        # 8 hours * 60 minutes * 60 seconds = 28800 seconds
+        timezone_offset = 8 * 3600 
+        local_time_sec = utime.time() + timezone_offset
+        
+        # Apply the offset explicitly to the Pico's hardware Real Time Clock (RTC)
+        machine.RTC().datetime(utime.localtime(local_time_sec))
+        print("✅ Clock synchronized to local time (+8 UTC) successfully!")
     except Exception as e:
         print("⚠️ NTP Time Sync failed (will use default onboard timer):", e)
 
@@ -77,7 +87,7 @@ def start():
     # Force real-time clock sync immediately on start
     sync_pico_clock()
     
-    # Establish baseline tracking markers *after* time sync
+    # Establish baseline tracking markers *after* time sync has aligned the hours
     local_now = time.localtime()
     current_calendar_day = local_now[2] 
     last_logged_hour = local_now[3]
