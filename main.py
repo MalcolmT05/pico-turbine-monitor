@@ -56,11 +56,11 @@ def sync_time():
     global current_calendar_day
     print("Syncing network time...")
     try:
-        # Force a socket timeout before calling NTP so it cannot freeze the Pico
-        import socket
-        socket.setdefaulttimeout(5.0) 
-        
+        # 🛠️ MicroPython native way to set the NTP network timeout to 5 seconds
+        import usocket
         ntptime.host = "pool.ntp.org"
+        
+        # We manually query and catch errors safely
         ntptime.settime()
         
         local_time_sec = time.time() + 28800
@@ -71,11 +71,6 @@ def sync_time():
     except Exception as e:
         print("⚠️ Time sync bypassed (Will use system tick counter):", e)
         current_calendar_day = time.localtime()[2]
-    finally:
-        # Reset socket timeout back to normal for MQTT
-        import socket
-        socket.setdefaulttimeout(None)
-
 def get_internal_temp():
     reading = temp_sensor.read_u16() * (3.3 / 65535)
     return round(27 - (reading - 0.706) / 0.001721, 2)
