@@ -14,7 +14,8 @@ AIO_KEY  = secrets['aio_key']
 # --- CONFIGURATION ---
 INTERVAL = 60  
 BACKUP_FILE = "backup_log.txt"
-hourly_energy_wh = 0.0  # We track in Wh internally for precision
+hourly_energy_wh = 0.0  
+last_logged_hour = -1  # Start with a dummy value to trigger initial sync
 
 # Configure hardware tracking
 temp_sensor = machine.ADC(machine.ADC.CORE_TEMP)
@@ -31,23 +32,24 @@ def send_status_msg(client, message):
         pass
 
 def start():
-    global hourly_energy_wh
+    global hourly_energy_wh, last_logged_hour
     
     # Get current time
     local_now = time.localtime()
     this_hour = local_now[3]
     this_minute = local_now[4]
     
-    # Set the baseline hour on the very first run
-    if not hasattr(start, "last_logged_hour"):
-        start.last_logged_hour = this_hour
+    # On the very first run after boot, set the current hour so it doesn't trigger immediately
+    if last_logged_hour == -1:
+        last_logged_hour = this_hour
+        print(f"✅ Baseline hour set to: {this_hour}")
 
     # 1. CALCULATIONS
     volts = round(random.uniform(11.0, 14.5), 2)
     amps  = round(random.uniform(0.0, 5.5), 2)
     watts = round(volts * amps, 2)
     
-    # Add to the hourly bucket (Watts / 60 minutes = Watt-hours)
+    # Add to the hourly bucket
     hourly_energy_wh += (watts / 60.0)
     
     print(f"📡 [{this_hour:02d}:{this_minute:02d}] Live: {watts}W | Hourly Bucket: {round(hourly_energy_wh, 2)}Wh")
@@ -64,26 +66,24 @@ def start():
         client.publish(f"{AIO_USER}/feeds/pico-temp", str(get_internal_temp()))
         
         # 3. THE HOURLY KWH TRIGGER
-        # This triggers exactly when the clock rolls over (e.g., 15:59 -> 16:00)
-        if this_hour != start.last_logged_hour:
+        if this_hour != last_logged_hour:
             # Convert Wh to kWh
             total_kwh = round(hourly_energy_wh / 1000.0, 4)
             
-            # Publish to the NEW feed (Number only!)
+            # Send number to total-generation
             client.publish(f"{AIO_USER}/feeds/total-generation", str(total_kwh))
             
-            send_status_msg(client, f"🕐 Hourly Reset: Generated {total_kwh} kWh in the last hour.")
+            send_status_msg(client, f"🕐 Hourly Reset: Generated {total_kwh} kWh.")
             
-            # Reset bucket for the new hour
+            # Reset for next hour
             hourly_energy_wh = 0.0
-            start.last_logged_hour = this_hour
+            last_logged_hour = this_hour
             
         client.disconnect()
         print("✅ Sync Complete.")
         
     except Exception as e:
         print(f"⚠️ Offline: {e}")
-        # Emergency backup to file
         with open(BACKUP_FILE, "a") as f:
             f.write(f"{this_hour:02d}:{this_minute:02d},{volts},{amps},{round(hourly_energy_wh, 2)}\n")
         gc.collect()
